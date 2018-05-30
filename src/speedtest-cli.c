@@ -1,4 +1,3 @@
-/*Author: Kyo*/
 #include <stdio.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -27,7 +26,7 @@
 #define DL_BUFFER_SIZE 8192
 
 float start_dl_time, stop_dl_time, start_ul_time, stop_ul_time;
-int thread_all_stop=0;
+int thread_all_stop=0, disable_real_time_reporting = 0, compute_dl_speed = 1, compute_ul_speed = 1;
 long int total_dl_size=0, total_ul_size=0;
 
 static pthread_mutex_t pthread_mutex = PTHREAD_MUTEX_INITIALIZER; 
@@ -355,7 +354,7 @@ void *calculate_ul_speed_thread() {
         duration = stop_ul_time-start_ul_time;
         //ul_speed = (double)total_ul_size/1024/1024/duration*8;
         ul_speed = (double)total_ul_size/1000/1000/duration*8;
-        if(duration>0) {
+        if(duration>0 && !disable_real_time_reporting) {
             printf("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bUpload speed: %0.2lf Mbps", ul_speed);
             fflush(stdout);
         }
@@ -367,8 +366,13 @@ void *calculate_ul_speed_thread() {
             //ul_speed = (double)total_ul_size/1024/1024/duration*8;
             ul_speed = (double)total_ul_size/1000/1000/duration*8;
             if(duration) {
-                printf("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bUpload speed: %0.2lf Mbps", ul_speed);
-                fflush(stdout);
+				if (!disable_real_time_reporting) {
+                	printf("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bUpload speed: %0.2lf Mbps", ul_speed);
+                	fflush(stdout);
+				} else {
+					printf("Upload speed: %0.2lf Mbps", ul_speed);
+					fflush(stdout);
+				}
             }
             break;
         }
@@ -383,7 +387,7 @@ void *calculate_dl_speed_thread() {
         duration = stop_dl_time-start_dl_time;
         //dl_speed = (double)total_dl_size/1024/1024/duration*8;
         dl_speed = (double)total_dl_size/1000/1000/duration*8;
-        if(duration>0) {
+        if(duration>0 && !disable_real_time_reporting) {
             printf("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bDownload speed: %0.2lf Mbps", dl_speed);
             fflush(stdout);
         }
@@ -395,8 +399,13 @@ void *calculate_dl_speed_thread() {
             //dl_speed = (double)total_dl_size/1024/1024/duration*8;
             dl_speed = (double)total_dl_size/1000/1000/duration*8;
             if(duration>0) {
-                printf("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bDownload speed: %0.2lf Mbps", dl_speed);
-                fflush(stdout);
+				if (!disable_real_time_reporting) {
+	                printf("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bDownload speed: %0.2lf Mbps", dl_speed);
+    	            fflush(stdout);
+				} else {
+                    printf("Download speed: %0.2lf Mbps", dl_speed);
+					fflush(stdout);
+                }
             }   
             break;
         }
@@ -605,13 +614,43 @@ int speedtest_upload(server_data_t *nearest_server) {
     return 1;
 }
 
-int main() {
-    int i, best_server_index;
+int main(int argc, char **argv) {
+    int i, best_server_index, opt;
     client_data_t client_data;
     server_data_t nearest_servers[NEAREST_SERVERS_NUM];
     pthread_t pid;
     struct sockaddr_in servinfo;
     struct itimerval timerVal;
+
+	while ((opt = getopt (argc, argv, "dush")) != -1) {
+		//printf("options: %c\n", opt);
+    	switch (opt) {
+        	case 's':
+            	disable_real_time_reporting = 1;
+	            break;
+			case 'd':
+				compute_dl_speed = 1;
+				compute_ul_speed = 0;
+				break;
+			case 'u':
+				compute_dl_speed = 0;
+				compute_ul_speed = 1;
+				break;
+			case 'h':
+				printf ("Usage: speedtest-cli [OPTIONS]\n\n"
+						"OPTIONS:\n"
+						"\t-s\tDisable real time reporting of download/upload speed. Print only the final result.\n"
+						"\t-d\tCompute download speed only.\n"
+						"\t-u\tCompute upload speed only.\n"
+						"\t-h\tPrint this help.\n\n");
+				return 0;
+    	    case '?':
+        	    fprintf (stderr, "Unknown option character `\\x%x'.\n", optopt);
+            	return 1;
+	        default:
+    	        break;
+	    }
+	}
 
     memset(&client_data, 0, sizeof(client_data_t));
     for(i=0; i<NEAREST_SERVERS_NUM; i++) {
@@ -656,19 +695,24 @@ int main() {
         signal(SIGALRM, stop_all_thread);
         timerVal.it_value.tv_sec = SPEEDTEST_DURATION;
         timerVal.it_value.tv_usec = 0;
-        setitimer(ITIMER_REAL, &timerVal, NULL);
 
-        pthread_create(&pid, NULL, calculate_dl_speed_thread, NULL);
-        speedtest_download(&nearest_servers[best_server_index]);
+		if(compute_dl_speed) {
+			setitimer(ITIMER_REAL, &timerVal, NULL);
+			pthread_create(&pid, NULL, calculate_dl_speed_thread, NULL);
+        	speedtest_download(&nearest_servers[best_server_index]);
+    	    sleep(1);
+	        printf("\n");
+		}
 
-        sleep(2);
-        printf("\n");
-        thread_all_stop=0;
-        setitimer(ITIMER_REAL, &timerVal, NULL);
-
-        pthread_create(&pid, NULL, calculate_ul_speed_thread, NULL);
-        speedtest_upload(&nearest_servers[best_server_index]);
-        printf("\n");
+        if(compute_ul_speed) {
+			thread_all_stop=0;
+	        setitimer(ITIMER_REAL, &timerVal, NULL);
+    	    pthread_create(&pid, NULL, calculate_ul_speed_thread, NULL);
+        	speedtest_upload(&nearest_servers[best_server_index]);
+			sleep(1);
+    	    printf("\n");
+		}
     }
     return 0;
 }
+
