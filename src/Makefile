@@ -1,7 +1,7 @@
 CFLAGS = -Wall -Wno-write-strings -g
 
 all:
-	$(CC) $(CFLAGS) $(LDFLAGS) speedtest-cli.c -o speedtest-cli -lm -lpthread
+	$(CC) $(CFLAGS) $(LDFLAGS) speedtest-cli.c -o speedtest-cli -lm -lpthread -lcurl -lexpat
 
 clean:
 	rm -f *.o speedtest-cli
